@@ -1,3 +1,7 @@
+const bcrypt = require('bcrypt')
+const User = require('../models/user')
+const Blog = require('../models/blog')
+
 const initialData = [
     {
         title: 'How to beat Jecht',
@@ -37,22 +41,74 @@ const initialUserData = [
     }
 ]
 
-function getTestBlog(withLikes,withTitle,withUrl) {
-    const blog = {
-        author:'Harry Potter',
+async function setupUsers() {
+    await User.deleteMany({})
+    const saltRounds = 10
+    initialUserData.map(user => new User(user))
+    for (let user of initialUserData) {
+        let userItem = new User(user)
+        userItem.passwordHash = await bcrypt.hash(user.password,saltRounds)
+        await userItem.save()
     }
-    if (withTitle) {
-        blog.title = 'I am a wizard'
+}
+
+async function tearDownUsers() {
+    await User.deleteMany({})
+}
+
+async function tearDownBlogs() {
+    await Blog.deleteMany({})
+}
+
+async function setupBlogs() {
+    await Blog.deleteMany({})
+    initialData.map(blog => new Blog(blog))
+    for (let blog of initialData) {
+        let blogItem = new Blog(blog)
+        await blogItem.save()
     }
-    if (withUrl) {
-        blog.url = 'www.hpiscool.test'
+}
+
+function getNewBlog() {
+    return {
+        title: 'How to write a test',
+        author: 'Some Legend',
+        url: 'www.agreattestwriter.test',
+        likes: 11,
     }
-    if (withLikes) {
-        blog.likes = withLikes
+}
+
+function getAuthenticatedUserCredential() {
+    const cred = {
+        username:getAuthenticatedUser().username,
+        password:getAuthenticatedUser().password
     }
-    return blog
+    return cred
+}
+
+function getNotAuthorizedUserCredential() {
+    const cred = {
+        username:getNotAuthorizedUser().username,
+        password:getNotAuthorizedUser().password
+    }
+    return cred
+}
+
+function getAuthenticatedUser() {
+    return initialUserData[0]
+}
+
+function getNotAuthorizedUser() {
+    return initialUserData[1]
+}
+
+function buildBearerHeader(response) {
+    return {
+        Authorization: 'Bearer '+response.body.token
+    }
 }
 
 module.exports = {
-    initialData,initialUserData,getTestBlog
+    initialData,initialUserData,getAuthenticatedUserCredential,getNotAuthorizedUserCredential,setupUsers,
+    getNewBlog,setupBlogs,tearDownBlogs,tearDownUsers,getAuthenticatedUser,getNotAuthorizedUser,buildBearerHeader
 }

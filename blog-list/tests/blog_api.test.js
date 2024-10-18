@@ -1,4 +1,4 @@
-const {test,beforeEach,after,describe} = require('node:test')
+const {test,before,beforeEach,after,describe} = require('node:test')
 const assert = require('node:assert')
 const mongoose = require('mongoose')
 const supertest = require('supertest')
@@ -18,24 +18,8 @@ const Blog = require('../models/blog')
 
 beforeEach(async () => {
     await Blog.deleteMany({})
-    
-    const users = await User.find({})
-
-    for (let user of users) {
-        user.blogs = []
-        await user.save()
-    }
-    
-    testHelper.initialData.map(blog => new Blog(blog)) //If we try to use a regular forEach we would run into trouble with 
-    for (let blog of testHelper.initialData) {         //async. beforeEach would not wait for the looped items to finish as the
-        let users = await User.find({})
-        let index = Math.floor(Math.random()*users.length)
-        let blogItem = new Blog(blog)                //await calls inside the forEach are considered seperate
-        blogItem.user = users[index]
-        const savedItem = await blogItem.save()
-        blogItem.user.blogs = blogItem.user.blogs.concat(savedItem._id)
-        await blogItem.user.save()
-    }
+    await testHelper.setupUsers()
+    await testHelper.setupBlogs()
 })
 
 describe('get and get json data validation', () => {
@@ -62,50 +46,99 @@ describe('get and get json data validation', () => {
 
 describe('post and post data validation', () => {
     test('blog can be added to the system sucessfully', async () => {
-        const blog = testHelper.getTestBlog(3,true,true)
-    
-        await api.post('/api/blogs').send(blog).expect(201).expect('Content-Type',/application\/json/)
+        const blog = testHelper.getNewBlog()
+        const loginResponse = await api.post('/api/login').send(testHelper.getAuthenticatedUserCredential())
+
+        await api.post('/api/blogs').set(testHelper.buildBearerHeader(loginResponse)).send(blog).expect(201).expect('Content-Type',/application\/json/)
     
         const response = await api.get('/api/blogs')
+
+        const newAddedItem = response.body.find(blg => blg.author === testHelper.getNewBlog().author)
     
         assert.strictEqual(response.body.length,testHelper.initialData.length+1)
-        assert.deepStrictEqual(response.body[3].author,'Harry Potter')
-        assert.strictEqual(response.body[3].likes,3)
+        assert.deepStrictEqual(newAddedItem.author,testHelper.getNewBlog().author)
+        assert.strictEqual(newAddedItem.likes,11)
+    })
+
+    test('blog fails with 401 if no token provided', async () => {
+        const blog = testHelper.getNewBlog()
+
+        await api.post('/api/blogs').send(blog).expect(401)
     })
     
     test('if likes property is missing from post it will default to 0', async () => {
-        let blog = testHelper.getTestBlog(undefined,true,true)
+        const blog = testHelper.getNewBlog()
+        const loginResponse = await api.post('/api/login').send(testHelper.getAuthenticatedUserCredential())
+
+        delete blog.likes
     
-        await api.post('/api/blogs').send(blog).expect(201).expect('Content-Type',/application\/json/)
+        await api.post('/api/blogs').set(testHelper.buildBearerHeader(loginResponse)).send(blog).expect(201).expect('Content-Type',/application\/json/)
     
         const response = await api.get('/api/blogs')
+        const newAddedItem = response.body.find(blg => blg.author === testHelper.getNewBlog().author)
+
         assert.strictEqual(response.body.length,testHelper.initialData.length+1)
-        assert.strictEqual(response.body[3].likes,0)
+        assert.strictEqual(newAddedItem.likes,0)
     })
     
     test('if title is missing from request then return a bad request (400) http code', async () => {
-        let blog = testHelper.getTestBlog(1,false,true)
+        const blog = testHelper.getNewBlog()
+        const loginResponse = await api.post('/api/login').send(testHelper.getAuthenticatedUserCredential())
+
+        delete blog.title
     
-        await api.post('/api/blogs').send(blog).expect(400)
+        await api.post('/api/blogs').set(testHelper.buildBearerHeader(loginResponse)).send(blog).expect(400)
     })
     
     test('if url is missing from request then return a bad request (400) http code', async () => {
-        let blog = testHelper.getTestBlog(1,true,false)
+        const blog = testHelper.getNewBlog()
+        const loginResponse = await api.post('/api/login').send(testHelper.getAuthenticatedUserCredential())
+
+        delete blog.url
     
-        await api.post('/api/blogs').send(blog).expect(400)
+        await api.post('/api/blogs').set(testHelper.buildBearerHeader(loginResponse)).send(blog).expect(400)
     })
 })
 
 describe('delete tests', () => {
-    test('confirm that data is deleted by delete operation', async () => {
-        const blogs = await api.get('/api/blogs')
-        const deleteId = blogs.body[0].id
+    test('blog can be succesfully deleted by delete operation if authorization is provided', async () => {
+        const blog = testHelper.getNewBlog()
+        const loginResponse = await api.post('/api/login').send(testHelper.getAuthenticatedUserCredential())
+        
+        const users = await User.find({})
+        const authUser = users.find(user => user.username === testHelper.getAuthenticatedUser().username)
+        blog.user = authUser._id
 
-        await api.delete(`/api/blogs/${deleteId}`).expect(204)
+        const postedItem = await api.post('/api/blogs').set(testHelper.buildBearerHeader(loginResponse)).send(blog)
+        const blogsAfterPost = await api.get('/api/blogs')
 
+        assert.strictEqual(blogsAfterPost.body.length,testHelper.initialData.length+1)
+
+        const deleteId = postedItem.body.id
+        await api.delete(`/api/blogs/${deleteId}`).set(testHelper.buildBearerHeader(loginResponse)).expect(204)
         const blogsAfterDelete = await api.get('/api/blogs')
 
-        assert.strictEqual(blogsAfterDelete.body.length,blogs.body.length-1)
+        assert.strictEqual(blogsAfterDelete.body.length,testHelper.initialData.length)
+    })
+
+    test('confirm that a different user cannot delete the blog if they do not own it', async () => {
+        const blog = testHelper.getNewBlog()
+        const authResponse = await api.post('/api/login').send(testHelper.getAuthenticatedUserCredential())
+        const users = await User.find({})
+        const authUser = users.find(user => user.username === testHelper.getAuthenticatedUser().username) //Still assign the blog to the correct user, but                                      
+        blog.user = authUser._id                                                                          //The login token was fetched for a different user
+
+        const postedItem = await api.post('/api/blogs').set(testHelper.buildBearerHeader(authResponse)).send(blog)
+        const blogsAfterPost = await api.get('/api/blogs')
+
+        assert.strictEqual(blogsAfterPost.body.length,testHelper.initialData.length+1)
+
+        const notAuthResponse = await api.post('/api/login').send(testHelper.getNotAuthorizedUserCredential())
+
+        const deleteId = postedItem.body.id
+        const resp = await api.delete(`/api/blogs/${deleteId}`).set(testHelper.buildBearerHeader(notAuthResponse)).expect(401)
+        
+        assert.match(resp.body.error,/User not authorized for this operation/)
     })
 })
 
@@ -133,5 +166,7 @@ describe('put tests', () => {
 })
 
 after(async () => {
+    await testHelper.tearDownBlogs()
+    await testHelper.tearDownUsers()
     await mongoose.connection.close()
 })

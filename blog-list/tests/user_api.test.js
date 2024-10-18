@@ -4,19 +4,14 @@ const mongoose = require('mongoose')
 const supertest = require('supertest')
 const app = require('../app')
 const testHelper = require('./test_helper')
+const bcrypt = require('bcrypt')
 
 const api = supertest(app)
 
 const User = require('../models/user')
 
 beforeEach(async () => {
-    await User.deleteMany({})
-
-    testHelper.initialUserData.map(user => new User(user))
-    for (let user of testHelper.initialUserData) {
-        let userItem = new User(user)
-        await userItem.save()
-    }
+    await testHelper.setupUsers()
 })
 
 describe('happy path post validation', () => {
@@ -72,5 +67,6 @@ describe('test user post validation is working', () => {
 })
 
 after(async () => {
+    await testHelper.tearDownUsers()
     await mongoose.connection.close()
 })

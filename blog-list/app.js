@@ -33,7 +33,6 @@ const mongoose = require('mongoose')
 */
 
 mongoose.set('strictQuery', false)
-console.log(config.MONGODB_URI)
 mongoose.connect(config.MONGODB_URI)
 .then(() => {
     logger.info('Successfully connected to mongo db')
@@ -45,6 +44,8 @@ mongoose.connect(config.MONGODB_URI)
 app.use(cors())
 app.use(express.static('dist'))
 app.use(express.json())
+
+app.use(middleware.getTokenFrom)
 
 app.use('/api/login',loginRouter)
 app.use('/api/blogs',blogRouter)

@@ -2,8 +2,7 @@ const blogRouter = require('express').Router()
 const Blog = require('../models/blog')
 const User = require('../models/user')
 const logger = require('../utils/logger')
-const jwt = require('jsonwebtoken')
-const config = require('../utils/config')
+const middleware = require('../utils/middleware')
 
 blogRouter.get('/', async (request, response) => {
     const blogs = await Blog.find({}).populate('user', { name:1, username:1, id:1 })
@@ -14,29 +13,13 @@ blogRouter.get('/:id',async (request,response) => {
     const blog = await Blog.findById(request.params.id)
     response.status(200).json(blog)
 })
-
-const getTokenFrom = (request) => {
-  const authorization = request.get('authorization')
-  if (authorization && authorization.startsWith('Bearer ')) {
-    return authorization.replace('Bearer ', '')
-  }
-  return null
-}
   
-blogRouter.post('/', async (request, response) => {
+blogRouter.post('/', middleware.userExtractor, async (request, response) => {
   const body = request.body
-
-  const decodedToken = jwt.verify(getTokenFrom(request), config.SECRET)
-
-  if (!decodedToken.id) {
-    return response.status(401).json({ error:'User not Authenticated'})
-  }
-
+  const user = request.user
   // const users = await User.find({})
   // const index = Math.floor(Math.random()*users.length)
   // const user = users[index]
-
-  const user = await User.findById(decodedToken.id)
 
   const blog = new Blog({
     title: body.title,
@@ -58,10 +41,18 @@ blogRouter.post('/', async (request, response) => {
   response.status(201).json(savedBlog)
 })
 
-blogRouter.delete('/:id',async (request,response) => {
+blogRouter.delete('/:id', middleware.userExtractor, async (request,response) => {
   logger.debug('id: ',request.params.id)
-  const deletedPerson = await Blog.findByIdAndDelete(request.params.id)
-  response.status(204).send()
+
+  const user = request.user
+  const blog = await Blog.findById(request.params.id)
+
+  if (user.id.toString() === blog.user.toString()) {
+    await Blog.deleteOne(blog)
+    response.status(204).json({ message:'Blog Deleted sucessfully '} )
+  } else {
+    response.status(401).json({ error:'User not authorized for this operation' })
+  }
 })
 
 blogRouter.put('/:id',async (request,response) => {
